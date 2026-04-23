@@ -139,6 +139,28 @@ def _windows_import_firewall(log: LogFn, src: Path) -> bool:
     return True
 
 
+def _windows_end_retry_prone_apps(log: LogFn) -> None:
+    """After a block, force-close apps that tend to busy-loop on failed connections (Windows)."""
+    # /T = process tree (v2rayN spawns v2ray/xray). 128 = no matching process.
+    targets: list[tuple[str, str]] = [
+        ("v2rayN.exe", "v2rayN"),
+        ("Telegram.exe", "Telegram Desktop"),
+    ]
+    for image, label in targets:
+        r = _subprocess_run(
+            ["taskkill", "/F", "/T", "/IM", image],
+            capture_output=True,
+            text=True,
+        )
+        if r.returncode == 0:
+            log(f"Ended task: {label}")
+        elif r.returncode == 128:
+            pass
+        else:
+            err = (r.stderr or r.stdout or "").strip()
+            log(f"Could not end {label}: {err or r.returncode}")
+
+
 LogFn = Callable[[str], None]
 UsageFn = Callable[[int, int, float], None]  # window_bytes, threshold_bytes, percent
 BlockedFn = Callable[[bool], None]
@@ -291,6 +313,7 @@ class NetworkLimiter:
                     check=True,
                 )
                 _write_blocking_session()
+                _windows_end_retry_prone_apps(log)
             else:
                 log(f"Blocking not implemented for OS: {self.os_type}")
                 return
