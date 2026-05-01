@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# Windows onefile (UAC). For macOS, use build_macos.sh + InternetLimiter_macos.spec.
 from PyInstaller.utils.hooks import collect_all
 
 datas = []

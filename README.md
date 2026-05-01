@@ -48,7 +48,7 @@ sudo python internet_limiter.py --unblock
 ## Building a standalone executable
 
 - **Windows:** run [`build_windows.bat`](build_windows.bat) (requires PyInstaller; see [`requirements-build.txt`](requirements-build.txt)). Output: `dist/InternetLimiter.exe` (requests admin via UAC).
-- **macOS:** run [`build_macos.sh`](build_macos.sh). Output: `dist/InternetLimiter.app`.
+- **macOS:** run [`build_macos.sh`](build_macos.sh) (uses [`InternetLimiter_macos.spec`](InternetLimiter_macos.spec) for an onedir `.app` bundle compatible with PyInstaller 6+). Output: `dist/InternetLimiter.app`.
 
 Optional **Inno Setup** installer script: [`installer.iss`](installer.iss) (expects the built `.exe` in `dist/`).
 

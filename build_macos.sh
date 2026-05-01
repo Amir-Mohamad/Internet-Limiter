@@ -4,12 +4,8 @@ cd "$(dirname "$0")"
 
 python3 -m pip install -r requirements-build.txt --quiet
 
-python3 -m PyInstaller --noconfirm --clean \
-  --windowed \
-  --name InternetLimiter \
-  --osx-bundle-identifier com.local.internetlimiter \
-  --collect-all customtkinter \
-  app_gui.py
+# Onedir + BUNDLE in InternetLimiter_macos.spec (PyInstaller 6: avoids onefile+.app issues).
+python3 -m PyInstaller --noconfirm --clean InternetLimiter_macos.spec
 
 echo
 echo "Done. App bundle: dist/InternetLimiter.app"

@@ -1,10 +1,9 @@
 @echo off
 REM Internet Limiter Control for Windows
-REM Run as Administrator
 
 if "%1"=="start" goto start
 if "%1"=="stop" goto stop
-if "%1"=="unblock" goto unblock
+if "%1"=="reset-proxy" goto reset_proxy
 if "%1"=="status" goto status
 goto usage
 
@@ -23,9 +22,9 @@ if %errorlevel%==0 (
 )
 goto end
 
-:unblock
-echo Unblocking internet...
-python internet_limiter.py --unblock
+:reset_proxy
+echo Turning off WinINet system proxy...
+python internet_limiter.py --reset-proxy
 goto end
 
 :status
@@ -38,12 +37,12 @@ if %errorlevel%==0 (
 goto end
 
 :usage
-echo Usage: net_control.bat [start^|stop^|unblock^|status]
+echo Usage: net_control.bat [start^|stop^|reset-proxy^|status]
 echo.
-echo   start    - Start monitoring
-echo   stop     - Stop monitoring
-echo   unblock  - Unblock internet
-echo   status   - Check if running
+echo   start        - Start monitoring
+echo   stop         - Stop monitoring
+echo   reset-proxy  - Disable Windows user proxy (WinINet)
+echo   status       - Check if running
 goto end
 
 :end

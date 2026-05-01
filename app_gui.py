@@ -10,7 +10,6 @@ import ctypes
 import json
 import platform
 import queue
-import shlex
 import subprocess
 import sys
 import threading
@@ -21,12 +20,12 @@ from typing import Any
 
 import customtkinter as ctk
 
-from limiter_core import NetworkLimiter, has_stale_blocking_state, is_superuser
+from limiter_core import NetworkLimiter
 
 APP_NAME = "Internet Limiter"
 # Limit-hit alert: keep to a few words only
 LIMIT_ALERT_TITLE = "Limit reached"
-LIMIT_ALERT_HINT = "Press Stop to restore"
+LIMIT_ALERT_HINT = "v2rayN was closed"
 SUPPORTED_GUI_PLATFORMS = frozenset({"Windows", "Darwin"})
 
 # Surfaces (light, dark) — tuned for readability and a calm “dashboard” feel
@@ -61,45 +60,8 @@ def _resolved_apps_light_theme() -> bool:
         return False
 
 
-def _startup_privilege_text() -> str:
-    if platform.system() == "Darwin":
-        return (
-            "Administrator (root) access is required to change macOS packet filter (pf) rules.\n\n"
-            "When you start monitoring, you can enter your password to relaunch elevated, "
-            "or run from Terminal: sudo python3 app_gui.py"
-        )
-    return (
-        "Administrator rights are required to change the Windows Firewall.\n\n"
-        "When you start monitoring, you can restart the app elevated."
-    )
-
-
-def _restart_elevation_prompt() -> str:
-    if platform.system() == "Darwin":
-        return (
-            "Administrator access is required to load pf rules.\n\n"
-            "Relaunch and enter your password when macOS prompts you?"
-        )
-    return (
-        "Administrator rights are required to control the firewall.\n\n"
-        "Restart the app as administrator?"
-    )
-
-
-def _stop_privilege_warning() -> str:
-    if platform.system() == "Darwin":
-        return (
-            "Not running as root — Stop may not restore pf. Relaunch elevated "
-            "(password prompt) or run with sudo, then press Stop again."
-        )
-    return (
-        "Not running as administrator — Stop may not be able to change the firewall. "
-        "Restart the app as administrator and press Stop again if needed."
-    )
-
-
-def _play_limit_block_alert() -> None:
-    """Clear alert so users notice the limiter blocked the network."""
+def _play_limit_reached_alert() -> None:
+    """Alert so users notice the usage limit was hit."""
     if platform.system() == "Windows":
         import winsound
 
@@ -176,36 +138,6 @@ def _flash_window_taskbar(ctk_window: ctk.CTk) -> None:
         pass
 
 
-def relaunch_elevated() -> None:
-    if platform.system() == "Windows":
-        params = " ".join(f'"{a}"' for a in sys.argv[1:])
-        try:
-            ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", sys.executable, params or "", None, 1
-            )
-        except Exception:
-            messagebox.showerror(
-                APP_NAME,
-                "Could not request administrator rights. Right-click the app and choose "
-                '"Run as administrator".',
-            )
-        return
-
-    if platform.system() == "Darwin":
-        cmd = shlex.join([sys.executable, *sys.argv[1:]])
-        script = f"do shell script {json.dumps(cmd)} with administrator privileges"
-        try:
-            subprocess.run(["/usr/bin/osascript", "-e", script], check=False)
-        except Exception:
-            messagebox.showerror(
-                APP_NAME,
-                "Could not prompt for administrator rights.\n\n"
-                "Open Terminal in this folder and run:\n"
-                "  sudo python3 app_gui.py",
-            )
-        return
-
-
 def _parse_float_entry(entry: ctk.CTkEntry, default: float) -> float:
     s = entry.get().strip()
     if not s:
@@ -242,10 +174,6 @@ class InternetLimiterApp(ctk.CTk):
         self.geometry(f"{ww}x{hh}+{x}+{y}")
 
         self.after(100, self._drain_ui_queue)
-        self.after(300, self._check_stale_blocking_on_startup)
-
-        if not is_superuser():
-            messagebox.showwarning(APP_NAME, _startup_privilege_text(), parent=self)
 
     def _card(self, parent: Any, **kwargs: Any) -> ctk.CTkFrame:
         return ctk.CTkFrame(
@@ -314,7 +242,7 @@ class InternetLimiterApp(ctk.CTk):
             inner,
             "Max usage in window (MB)",
             "20",
-            "Total download+upload allowed before a block.",
+            "Total download+upload allowed before v2rayN is closed.",
         )
         self.ent_window = self._labeled_entry(
             inner,
@@ -422,7 +350,7 @@ class InternetLimiterApp(ctk.CTk):
         self._badge.pack_propagate(False)
         self.lbl_blocked = ctk.CTkLabel(
             self._badge,
-            text="  Firewall: not blocking  ",
+            text="  v2rayN: not closed by limiter  ",
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color=("#166534", "#bbf7d0"),
         )
@@ -624,7 +552,7 @@ class InternetLimiterApp(ctk.CTk):
         if self._limit_dialog_open:
             return
         self._limit_dialog_open = True
-        _play_limit_block_alert()
+        _play_limit_reached_alert()
         self.lift()
         self.attributes("-topmost", True)
         self.after(450, lambda: self.attributes("-topmost", False))
@@ -703,55 +631,17 @@ class InternetLimiterApp(ctk.CTk):
             pass
         btn.focus_set()
 
-    def _check_stale_blocking_on_startup(self) -> None:
-        if not has_stale_blocking_state():
-            return
-        msg = (
-            f"A previous session may have left your network blocked by {APP_NAME} "
-            "(for example the app crashed or was force-closed before pressing Stop).\n\n"
-            "Restore your saved firewall or packet filter settings now?"
-        )
-        if not messagebox.askyesno(APP_NAME, msg, parent=self):
-            return
-        if not is_superuser():
-            messagebox.showwarning(
-                APP_NAME,
-                "Administrator rights are required to restore firewall or pf settings.\n\n"
-                "Restart the app as administrator and you will be prompted again, or run:\n"
-                "  python internet_limiter.py --unblock",
-                parent=self,
-            )
-            return
-
-        self._append_log("Restoring network after an interrupted session…")
-
-        def restore_task() -> None:
-            def log_fn(msg: str) -> None:
-                self.after(0, lambda m=msg: self._append_log(m))
-
-            lim = NetworkLimiter()
-            lim.unblock_internet(on_log=log_fn)
-            blocked = lim.is_blocked
-
-            def done() -> None:
-                self._limiter.is_blocked = blocked
-                self._set_badge(blocked)
-
-            self.after(0, done)
-
-        threading.Thread(target=restore_task, daemon=True).start()
-
-    def _set_badge(self, blocked: bool) -> None:
-        if blocked:
+    def _set_badge(self, limit_hit: bool) -> None:
+        if limit_hit:
             self._badge.configure(fg_color=("#fef2f2", "#7f1d1d"))
             self.lbl_blocked.configure(
-                text="  Firewall: blocking (all traffic paused)  ",
+                text="  v2rayN: closed (limit reached)  ",
                 text_color=("#b91c1c", "#fecaca"),
             )
         else:
             self._badge.configure(fg_color=("#ecfdf5", "#14532d"))
             self.lbl_blocked.configure(
-                text="  Firewall: not blocking  ",
+                text="  v2rayN: not closed by limiter  ",
                 text_color=("#166534", "#bbf7d0"),
             )
 
@@ -793,12 +683,6 @@ class InternetLimiterApp(ctk.CTk):
         self._ui_queue.put(item)
 
     def _on_start(self) -> None:
-        if not is_superuser():
-            if messagebox.askyesno(APP_NAME, _restart_elevation_prompt(), parent=self):
-                relaunch_elevated()
-                self.destroy()
-            return
-
         if self._worker and self._worker.is_alive():
             return
 
@@ -845,6 +729,7 @@ class InternetLimiterApp(ctk.CTk):
         self.btn_stop.configure(state="normal")
         self.progress.configure(progress_color=ACCENT)
         self._chart_samples.clear()
+        self._set_badge(False)
         self._append_log("Monitoring started.")
         self.update_idletasks()
         self.after(0, self._draw_usage_chart)
@@ -853,7 +738,7 @@ class InternetLimiterApp(ctk.CTk):
         if self._stop_busy:
             return
         self._stop_busy = True
-        self._append_log("Stop requested — ending monitoring and restoring internet…")
+        self._append_log("Stop requested — stopping monitoring…")
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="disabled")
         self._stop.set()
@@ -864,21 +749,10 @@ class InternetLimiterApp(ctk.CTk):
                 if w is not None and w.is_alive():
                     w.join(timeout=8.0)
 
-                def log_fn(msg: str) -> None:
-                    self.after(0, lambda m=msg: self._append_log(m))
-
-                self._limiter.unblock_internet(on_log=log_fn)
-                blocked = self._limiter.is_blocked
-
                 def finish() -> None:
                     try:
-                        if not is_superuser():
-                            messagebox.showwarning(
-                                APP_NAME,
-                                _stop_privilege_warning(),
-                                parent=self,
-                            )
-                        self._set_badge(blocked)
+                        limit_hit = self._limiter.limit_action_taken
+                        self._set_badge(limit_hit)
                         self._chart_samples.clear()
                         self.update_idletasks()
                         self.after(0, self._draw_usage_chart)
@@ -900,15 +774,6 @@ class InternetLimiterApp(ctk.CTk):
         threading.Thread(target=stop_task, daemon=True).start()
 
     def _on_close(self) -> None:
-        if self._limiter.is_blocked:
-            if not messagebox.askyesno(
-                APP_NAME,
-                "Internet is still blocked by the firewall. Exit anyway?\n\n"
-                "Tip: press Stop first to restore internet. You can also run the CLI with "
-                "--unblock (Windows: as Administrator; macOS: sudo).",
-                parent=self,
-            ):
-                return
         self._stop.set()
         self.destroy()
 
